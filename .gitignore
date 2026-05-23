@@ -12,3 +12,5 @@ venv/
 # Pdf files and .html files
 *.pdf
 *.html
+
+/logs
