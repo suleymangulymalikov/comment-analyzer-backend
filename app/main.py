@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from app.db.connection import connect_db
-from app.routers import users, analyze, analyses
+from app.routers import users, analyze, analyses, payments, admin, credits
 
 load_dotenv()
 
@@ -29,3 +29,6 @@ app.add_middleware(
 app.include_router(users.router)
 app.include_router(analyze.router)
 app.include_router(analyses.router)
+app.include_router(payments.router)
+app.include_router(admin.router)
+app.include_router(credits.router)

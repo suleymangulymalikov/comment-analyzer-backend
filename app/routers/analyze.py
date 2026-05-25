@@ -6,11 +6,11 @@ from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from googleapiclient.discovery import build
 
-from app.db.models import Video, Analysis
+from app.db.models import Video, Analysis, User, CreditTransaction
 from app.fetchers.video import fetch_video
 from app.fetchers.comments import fetch_comments
 from app.services.analyzer import run_analysis
-from app.config import DEFAULT_PROVIDER, COMMENTS_STALE_AFTER_HOURS
+from app.config import DEFAULT_PROVIDER, COMMENTS_STALE_AFTER_HOURS, credits_for_count
 from app.prompts import CURRENT_PROMPT_VERSION
 
 router = APIRouter()
@@ -46,6 +46,10 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
     if not x_user_id:
         raise HTTPException(status_code=401, detail="Missing x-user-id header")
 
+    user = User.objects(user_id=x_user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     try:
         video_id = extract_video_id(req.video_url)
     except ValueError as e:
@@ -61,11 +65,30 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
         or existing.comments_fetched_at is None
         or existing.comments_fetched_at.replace(tzinfo=timezone.utc) < stale_cutoff
     )
+
     if comments_stale:
         try:
             video, _, _, _ = fetch_video(video_id, youtube)
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
+
+        comment_count = video.stats.comment_count if video.stats else 0
+    else:
+        video = existing
+        comment_count = video.comments_stored_count or (video.stats.comment_count if video.stats else 0)
+
+    credits_needed = credits_for_count(comment_count)
+    if user.credits < credits_needed:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "insufficient_credits",
+                "required": credits_needed,
+                "balance": user.credits,
+            },
+        )
+
+    if comments_stale:
         fetch_comments(video_id, video.channel_id, youtube)
 
     video = Video.objects(video_id=video_id).first()
@@ -86,6 +109,16 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
+        User.objects(user_id=x_user_id).update_one(dec__credits=credits_needed)
+        CreditTransaction(
+            user_id=x_user_id,
+            amount=-credits_needed,
+            type="analysis",
+            description=f"Analyzed: {video.title}",
+        ).save()
+
+    user.reload()
+
     return {
         "id": str(analysis.id),
         "video_id": video_id,
@@ -98,4 +131,5 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
         "stats": analysis.stats,
         "insights": analysis.insights,
         "created_at": analysis.created_at,
+        "credits_remaining": user.credits,
     }
