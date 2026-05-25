@@ -4,12 +4,12 @@ from datetime import datetime, timezone
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
 
-from db.connection import connect_db, disconnect_db
-from db.models import Video
-from fetchers.fetch_video import fetch_video
-from fetchers.fetch_comments import fetch_comments
-from analyzer import run_analysis
-from config import DEFAULT_PROVIDER
+from app.db.connection import connect_db, disconnect_db
+from app.db.models import Video
+from app.fetchers.video import fetch_video
+from app.fetchers.comments import fetch_comments
+from app.services.analyzer import run_analysis
+from app.config import DEFAULT_PROVIDER
 
 load_dotenv()
 
@@ -45,14 +45,14 @@ def do_fetch(video_id, youtube):
     video, video_quota, channel_status, video_status = fetch_video(video_id, youtube)
     quota_channel = 1
     quota_video = video_quota - quota_channel
-    print(f"  ✓ Channel {channel_status}: {video.channel_id}")
-    print(f"  ✓ Video {video_status}: {video.title[:60]}")
+    print(f"  Channel {channel_status}: {video.channel_id}")
+    print(f"  Video {video_status}: {video.title[:60]}")
 
     print("\n--- Fetching comments ---")
     quota_comments = fetch_comments(video_id, video.channel_id, youtube)
 
     total = log_quota(video_id, video.title, quota_channel, quota_video, quota_comments)
-    print(f"\n  ✓ Fetch complete. Quota used: {total} units (logged to {QUOTA_LOG_FILE})")
+    print(f"\n  Fetch complete. Quota used: {total} units (logged to {QUOTA_LOG_FILE})")
     return video
 
 
@@ -70,7 +70,7 @@ def do_analyze(video_id, provider):
 
     print(f"\n--- Running analysis ({provider}) ---")
     analysis = run_analysis(video_id, video.channel_id, provider=provider)
-    print(f"  ✓ Analysis complete (id: {analysis.id})")
+    print(f"  Analysis complete (id: {analysis.id})")
     return True
 
 

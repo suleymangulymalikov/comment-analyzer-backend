@@ -1,26 +1,21 @@
 from datetime import datetime, timezone
-from db.models import Comment, Video
+from app.db.models import Comment, Video
 
 
 def now():
     return datetime.now(timezone.utc)
 
+
 def parse_dt(dt_str):
-    """Convert YouTube datetime string to Python datetime."""
     return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+
 
 def save_comment(comment_id, video_id, channel_id, text, author,
                  author_channel_id, like_count, published_at,
                  is_reply, parent_comment_id, reply_count):
-    """
-    Saves a single comment to MongoDB.
-    Skips if comment_id already exists.
-    """
-
     if Comment.objects(comment_id=comment_id).first():
-        print(f"✓ Comment already exists: '{text[:50]}...' (id: {comment_id})")
-        return
-    
+        return False
+
     Comment(
         comment_id=comment_id,
         video_id=video_id,
@@ -36,15 +31,10 @@ def save_comment(comment_id, video_id, channel_id, text, author,
         created_at=now()
     ).save()
 
-    return True  # indicates comment was saved
+    return True
+
 
 def fetch_comments(video_id, channel_id, youtube):
-    """
-    Fetches all comments and replies for a video and saves them flat to MongoDB.
-    Skips comments already in DB.
-    Updates the Video document when done.
-    """
-
     total_saved = 0
     total_skipped = 0
     quota_used = 0
@@ -58,15 +48,14 @@ def fetch_comments(video_id, channel_id, youtube):
             pageToken=next_page_token
         ).execute()
         quota_used += 1
- 
+
         for item in response["items"]:
             thread_snippet = item["snippet"]
             top = thread_snippet["topLevelComment"]
             top_snippet = top["snippet"]
             comment_id = top["id"]
             reply_count = thread_snippet["totalReplyCount"]
- 
-            # --- Save top-level comment ---
+
             saved = save_comment(
                 comment_id=comment_id,
                 video_id=video_id,
@@ -84,10 +73,9 @@ def fetch_comments(video_id, channel_id, youtube):
                 total_saved += 1
             else:
                 total_skipped += 1
- 
+
             inline_replies = item.get("replies", {}).get("comments", [])
- 
-            # CASE 1: inline replies contain everything
+
             if reply_count == 0 or reply_count <= len(inline_replies):
                 for reply in inline_replies:
                     reply_snippet = reply["snippet"]
@@ -108,11 +96,9 @@ def fetch_comments(video_id, channel_id, youtube):
                         total_saved += 1
                     else:
                         total_skipped += 1
- 
-            # CASE 2: replies truncated → fetch all via comments.list
             else:
                 reply_token = None
- 
+
                 while True:
                     reply_response = youtube.comments().list(
                         part="snippet",
@@ -121,7 +107,7 @@ def fetch_comments(video_id, channel_id, youtube):
                         pageToken=reply_token
                     ).execute()
                     quota_used += 1
- 
+
                     for reply in reply_response["items"]:
                         reply_snippet = reply["snippet"]
                         saved = save_comment(
@@ -141,16 +127,15 @@ def fetch_comments(video_id, channel_id, youtube):
                             total_saved += 1
                         else:
                             total_skipped += 1
- 
+
                     reply_token = reply_response.get("nextPageToken")
                     if not reply_token:
                         break
- 
+
         next_page_token = response.get("nextPageToken")
         if not next_page_token:
             break
 
-    # --- Update Video document ---
     video = Video.objects(video_id=video_id).first()
     if video:
         video.comments_fetched = True

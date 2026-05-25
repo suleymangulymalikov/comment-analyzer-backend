@@ -18,32 +18,34 @@ pip install -r requirements.txt
 
 ## Running the App
 
-**CLI (original entry point):**
-```
-python main.py --video_id <ID> --fetch
-python main.py --video_id <ID> --analyze
-python main.py --video_id <ID> --analyze --provider claude
-```
-
 **HTTP API:**
 ```
-uvicorn api:app --reload
-# POST http://localhost:8000/analyze  {"video_url": "https://youtube.com/watch?v=..."}
+uvicorn app.main:app --reload
+```
+
+**CLI:**
+```
+python cli.py --video_id <ID> --fetch
+python cli.py --video_id <ID> --analyze
+python cli.py --video_id <ID> --run_all --provider gemini
 ```
 
 ## Architecture
 
-The pipeline has two phases: **fetch → analyze**.
+All application code lives under `app/`. The pipeline has two phases: **fetch → analyze**.
 
-**Fetch** (`fetchers/`): Hits YouTube Data API v3 to pull video metadata, channel info, and all comments (including paginated replies). Stores everything flat in MongoDB via MongoEngine. `Video.comments_fetched` is the flag that gates the analyze phase.
+**`app/fetchers/`**: Hits YouTube Data API v3 to pull video metadata, channel info, and all comments (including paginated replies). Stores everything flat in MongoDB via MongoEngine. Comments re-fetch if `comments_fetched_at` is older than 24 hours (`COMMENTS_STALE_AFTER_HOURS` in `app/config.py`).
 
-**Analyze** (`analyzer.py` + `ai/`): Loads top-level comments from MongoDB, builds a prompt, calls the configured AI provider, parses the JSON response, and saves an `Analysis` document. The active prompt is `CURRENT_PROMPT_VERSION` in `helpers/prompts.py` — increment this when changing the prompt so old analyses remain comparable.
+**`app/services/analyzer.py`**: Loads top-level comments from MongoDB, builds a prompt, calls the configured AI provider, parses the JSON response, and saves an `Analysis` document per user. The active prompt is `CURRENT_PROMPT_VERSION` in `app/prompts/__init__.py` — increment this when changing the prompt so old analyses remain comparable.
 
-**AI providers** (`ai/gemini.py`, `ai/claude.py`, `ai/openai.py`): Each exposes a single `analyze(comments, prompt) -> (result_dict, model_name)` function. `config.py` maps provider names to modules. Gemini (`gemini-2.5-flash-lite`) is the only fully implemented provider; claude and openai raise `NotImplementedError`.
+**`app/ai/`** (`gemini.py`, `claude.py`, `openai.py`): Each exposes a single `analyze(comments, prompt) -> (result_dict, model_name)` function. `app/config.py` maps provider names to modules. Gemini (`gemini-2.5-flash-lite`) is the only fully implemented provider; claude and openai raise `NotImplementedError`.
 
-**Database** (`db/`): MongoEngine ODM. `connect_db()` / `disconnect_db()` must wrap any script that touches the DB. In the FastAPI app this is handled in the lifespan handler. Collections: `channels`, `videos`, `comments`, `analyses`.
+**`app/db/`**: MongoEngine ODM. `connect_db()` / `disconnect_db()` must wrap any script that touches the DB. In the FastAPI app this is handled in the lifespan handler. Collections: `users`, `channels`, `videos`, `comments`, `analyses`.
 
-**HTTP API** (`api.py`): FastAPI app. The single `POST /analyze` endpoint extracts a video ID from any YouTube URL format, runs fetch (skipped if already in DB) and analysis, then returns the `Analysis` fields as JSON. The DB connection is opened once at server startup via the `lifespan` context.
+**`app/routers/`**: FastAPI routers split by concern:
+- `users.py` — `POST /users/sync` (create-or-find user, called by Next.js signIn)
+- `analyze.py` — `POST /analyze` (fetch + analyze, requires `x-user-id` header)
+- `analyses.py` — `GET /analyses`, `GET /analyses/{id}` (history, requires `x-user-id` header)
 
 ## Key Data Flow Detail
 

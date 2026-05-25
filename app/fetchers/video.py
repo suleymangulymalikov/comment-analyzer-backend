@@ -1,15 +1,9 @@
 from datetime import datetime
-from db.models import Video, VideoStats
-from fetchers.fetch_channel import fetch_channel
+from app.db.models import Video, VideoStats
+from app.fetchers.channel import fetch_channel
 
 
 def fetch_video(video_id, youtube):
-    """
-    Fetches video data from YouTube API and upserts to MongoDB.
-    Also upserts the channel this video belongs to.
-    Returns (Video document, quota_used, channel_status, video_status).
-    """
-
     response = youtube.videos().list(
         part="snippet,statistics,contentDetails,status",
         id=video_id
@@ -24,11 +18,9 @@ def fetch_video(video_id, youtube):
     content_details = data["contentDetails"]
     status = data["status"]
 
-    # --- Upsert channel first ---
     channel_id = snippet["channelId"]
     _, channel_quota, channel_status = fetch_channel(channel_id, youtube)
 
-    # --- Thumbnail: try maxres first, fall back to standard, then high ---
     thumbnails = snippet.get("thumbnails", {})
     thumbnail_url = (
         thumbnails.get("maxres", {}).get("url") or

@@ -1,12 +1,8 @@
 from datetime import datetime
-from db.models import Channel, ChannelStats
+from app.db.models import Channel, ChannelStats
+
 
 def fetch_channel(channel_id, youtube):
-    """
-    Fetches channel data from YouTube API and upserts to MongoDB.
-    Returns the Channel document.
-    """
-
     response = youtube.channels().list(
         part="snippet,statistics,brandingSettings,contentDetails",
         id=channel_id
@@ -14,14 +10,13 @@ def fetch_channel(channel_id, youtube):
 
     if not response.get("items"):
         raise ValueError(f"Channel with ID {channel_id} not found")
-    
+
     data = response["items"][0]
     snippet = data["snippet"]
     statistics = data["statistics"]
     content_details = data["contentDetails"]
     branding = data.get("brandingSettings", {})
 
-    # Map API response to Channel document
     channel_data = {
         "name": snippet["title"],
         "custom_url": snippet.get("customUrl"),
@@ -40,7 +35,6 @@ def fetch_channel(channel_id, youtube):
         ),
     }
 
-    # Upsert to MongoDB
     existing = Channel.objects(channel_id=channel_id).first()
 
     if existing:
