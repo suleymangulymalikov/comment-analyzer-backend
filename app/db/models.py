@@ -27,6 +27,8 @@ class VideoStats(EmbeddedDocument):
 class User(Document):
     user_id = StringField(required=True, unique=True)
     email = StringField(required=True)
+    credits = IntField(default=0)
+    stripe_customer_id = StringField()
 
     created_at = DateTimeField(default=now)
 
@@ -118,6 +120,20 @@ class Comment(Document):
             "comment_id", "video_id", "channel_id",
             "parent_comment_id", "is_reply", "like_count", "published_at"
         ]
+    }
+
+
+class CreditTransaction(Document):
+    user_id = StringField(required=True)
+    amount = IntField(required=True)        # positive = added, negative = spent
+    type = StringField(required=True)       # "purchase" | "analysis" | "subscription"
+    description = StringField()
+    stripe_session_id = StringField()
+    created_at = DateTimeField(default=now)
+
+    meta = {
+        "collection": "credit_transactions",
+        "indexes": ["user_id", "created_at"]
     }
 
 
