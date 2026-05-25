@@ -21,6 +21,11 @@ STRIPE_PRICE_SUB_PRO=price_...         # $19.99/month, 40 credits
 
 # Admin endpoint protection
 ADMIN_SECRET=some_secret_key
+
+# Shared secret with Next.js backend — every request except /payments/webhook
+# must include: Authorization: Bearer <INTERNAL_API_SECRET>
+# Leave unset in local dev to skip the check.
+INTERNAL_API_SECRET=<generate with: openssl rand -hex 32>
 ```
 
 Use the `.venv` virtual environment — all dependencies are installed there:
@@ -92,6 +97,18 @@ Cached analyses (same video/user/provider/prompt_version) do NOT cost credits �
 - `invoice.payment_succeeded` → adds monthly credits for subscription renewals
 
 Subscription metadata (`user_id`, `price_key`) must be on the Stripe Subscription object (set via `subscription_data.metadata` in the checkout session creation) so the invoice webhook can identify the user.
+
+## Backend Security
+
+All requests (except `POST /payments/webhook`) must include:
+```
+Authorization: Bearer <INTERNAL_API_SECRET>
+```
+This is enforced by `InternalAuthMiddleware` in `app/main.py`. If the header is missing or wrong the backend returns `403`. The check is skipped when `INTERNAL_API_SECRET` is not set, so local dev works without it.
+
+`/payments/webhook` is exempt because Stripe calls it directly — it is protected instead by Stripe's own signature verification (`STRIPE_WEBHOOK_SECRET`).
+
+The Next.js server must add this header to every fetch call to the backend. `INTERNAL_API_SECRET` must be a non-`NEXT_PUBLIC_` env var so it is never sent to the browser.
 
 ## Key Data Flow Detail
 

@@ -40,3 +40,9 @@ STRIPE_CREDITS = {
     "sub_starter":   15,
     "sub_pro":       40,
 }
+
+# Shared secret between Next.js server and this backend.
+# When set, every request except /payments/webhook must include:
+# Authorization: Bearer <INTERNAL_API_SECRET>
+# Leave unset in local dev to skip the check.
+INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
