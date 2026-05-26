@@ -118,31 +118,43 @@ The Next.js server must add this header to every fetch call to the backend. `INT
 
 Prompts live in `app/prompts/__init__.py` as a dict keyed by version int. `CURRENT_PROMPT_VERSION = 5` is the active one. Each `Analysis` document stores `prompt_version` so results can be compared across prompt iterations without re-fetching.
 
+## Deployment
+
+**Platform:** Railway — `https://web-production-47395.up.railway.app`
+Auto-deploys on every push to `main`.
+
+**Railway env vars set:**
+- `YOUTUBE_API_KEY`, `MONGODB_URI`, `GEMINI_API_KEY`
+- `INTERNAL_API_SECRET`, `ADMIN_SECRET`
+- `ALLOWED_ORIGINS=https://comment-analyzer-frontend-murex.vercel.app`
+
+**MongoDB Atlas:** Network Access set to `0.0.0.0/0` (allow all IPs) — required because Railway has dynamic IPs.
+
 ---
 
-## Next Steps Before Going Live
+## TODO — Must complete before launch
 
-### 1. Stripe Dashboard Setup
-- Create 3 products in [Stripe Dashboard](https://dashboard.stripe.com/products):
+### 1. Stripe setup (NOT done yet)
+- [ ] Create 3 products in [Stripe Dashboard](https://dashboard.stripe.com/products):
   - **Standard Pack** — one-time, $7.99
-  - **Starter** — recurring monthly, $9.99
-  - **Pro** — recurring monthly, $19.99
-- Copy the Price IDs into `.env` (`STRIPE_PRICE_PACK_STANDARD`, etc.)
-- Add a webhook endpoint pointing to `https://yourdomain.com/payments/webhook`
-- Subscribe to events: `checkout.session.completed`, `invoice.payment_succeeded`
-- Copy the webhook signing secret into `.env` as `STRIPE_WEBHOOK_SECRET`
+  - **Starter** — recurring monthly, $9.99/mo
+  - **Pro** — recurring monthly, $19.99/mo
+- [ ] Copy the 3 Price IDs into Railway env vars: `STRIPE_PRICE_PACK_STANDARD`, `STRIPE_PRICE_SUB_STARTER`, `STRIPE_PRICE_SUB_PRO`
+- [ ] Add webhook in Stripe dashboard → `https://web-production-47395.up.railway.app/payments/webhook`
+- [ ] Subscribe to: `checkout.session.completed`, `invoice.payment_succeeded`
+- [ ] Copy webhook signing secret into Railway env var: `STRIPE_WEBHOOK_SECRET`
+- [ ] Copy Stripe secret key into Railway env var: `STRIPE_SECRET_KEY`
+- [ ] Test with `stripe listen --forward-to localhost:8000/payments/webhook` before going live
 
-### 2. Test Stripe Locally
-```
-stripe listen --forward-to localhost:8000/payments/webhook
-```
-Complete a test checkout and verify credits are added to the user in MongoDB.
+### 2. Frontend integration (NOT done yet)
+- [ ] Add `BACKEND_URL` and `INTERNAL_API_SECRET` to Next.js env vars
+- [ ] Add `Authorization: Bearer ${process.env.INTERNAL_API_SECRET}` to every server-side fetch to backend
+- [ ] Build pricing page (call `POST /payments/checkout`, redirect to `checkout_url`)
+- [ ] Show credit balance from `GET /credits`
+- [ ] Handle `402` from `POST /analyze` → redirect to pricing page
+- [ ] Add "Contact us" button for Business tier
 
-### 3. Deploy the Backend
-Choose a hosting platform (Railway, Render, Fly.io, etc.) and set all `.env` variables as environment secrets.
-
-### 4. Frontend Integration
-- Call `POST /payments/checkout` with `price_key` + `success_url` + `cancel_url` to get a `checkout_url`, then redirect the user to it
-- Show credit balance from `GET /credits`
-- Handle `402` responses from `POST /analyze` (redirect to pricing page)
-- Add a "Contact us" button for the Business tier (no backend needed)
+### 3. When ready for real users
+- [ ] Switch Stripe from test mode to live mode (new keys)
+- [ ] Update `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in Railway with live keys
+- [ ] Upgrade Railway to Hobby plan ($5/month) to prevent cold starts
