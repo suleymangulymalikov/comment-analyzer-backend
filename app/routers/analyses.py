@@ -1,16 +1,24 @@
-from fastapi import APIRouter, HTTPException, Header
+from bson import ObjectId
+from bson.errors import InvalidId
+from fastapi import APIRouter, HTTPException, Header, Query
 
 from app.db.models import Analysis, Video
 
 router = APIRouter()
 
+_MAX_PAGE_SIZE = 50
+
 
 @router.get("/analyses")
-def list_analyses(x_user_id: str | None = Header(default=None)):
+def list_analyses(
+    x_user_id: str | None = Header(default=None),
+    limit: int = Query(default=20, ge=1, le=_MAX_PAGE_SIZE),
+    skip: int = Query(default=0, ge=0),
+):
     if not x_user_id:
         raise HTTPException(status_code=401, detail="Missing x-user-id header")
 
-    analyses = Analysis.objects(user_id=x_user_id).order_by("-created_at")
+    analyses = Analysis.objects(user_id=x_user_id).order_by("-created_at").skip(skip).limit(limit)
 
     video_ids = {a.video_id for a in analyses}
     videos = {v.video_id: v for v in Video.objects(video_id__in=list(video_ids))}
@@ -36,7 +44,12 @@ def get_analysis(analysis_id: str, x_user_id: str | None = Header(default=None))
     if not x_user_id:
         raise HTTPException(status_code=401, detail="Missing x-user-id header")
 
-    analysis = Analysis.objects(id=analysis_id, user_id=x_user_id).first()
+    try:
+        oid = ObjectId(analysis_id)
+    except (InvalidId, Exception):
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    analysis = Analysis.objects(id=oid, user_id=x_user_id).first()
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
 

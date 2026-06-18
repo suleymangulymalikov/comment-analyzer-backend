@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, parse_qs
 
 from fastapi import APIRouter, HTTPException, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from googleapiclient.discovery import build
 
 from app.db.models import Video, Analysis, User, CreditTransaction
@@ -39,6 +39,14 @@ class AnalyzeRequest(BaseModel):
     video_url: str
     provider: str = DEFAULT_PROVIDER
     force: bool = False
+
+    @field_validator("provider")
+    @classmethod
+    def provider_must_be_known(cls, v: str) -> str:
+        from app.config import PROVIDERS
+        if v not in PROVIDERS:
+            raise ValueError(f"Unknown provider '{v}'. Must be one of: {list(PROVIDERS)}")
+        return v
 
 
 @router.post("/analyze")
