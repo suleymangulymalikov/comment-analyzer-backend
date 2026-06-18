@@ -1,6 +1,7 @@
 import os
+import hmac
 from fastapi import APIRouter, HTTPException, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.db.models import User, CreditTransaction
 
@@ -12,11 +13,20 @@ class AddCreditsRequest(BaseModel):
     amount: int
     description: str = "Manual credit adjustment"
 
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_nonzero(cls, v: int) -> int:
+        if v == 0:
+            raise ValueError("amount must be non-zero")
+        return v
+
 
 @router.post("/admin/credits")
 def add_credits(req: AddCreditsRequest, x_admin_key: str | None = Header(default=None)):
     admin_secret = os.getenv("ADMIN_SECRET", "")
-    if not admin_secret or x_admin_key != admin_secret:
+    supplied = x_admin_key or ""
+    # Timing-safe comparison to prevent secret enumeration
+    if not admin_secret or not hmac.compare_digest(supplied.encode(), admin_secret.encode()):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     user = User.objects(user_id=req.user_id).first()

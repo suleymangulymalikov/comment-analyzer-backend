@@ -62,7 +62,7 @@ All application code lives under `app/`. The pipeline has two phases: **fetch �
 **`app/routers/`**: FastAPI routers split by concern:
 - `users.py` — `POST /users` (create-or-find user by `user_id` + `email`)
 - `analyze.py` — `POST /analyze` (fetch + analyze, requires `x-user-id` header)
-- `analyses.py` — `GET /analyses`, `GET /analyses/{id}` (history, requires `x-user-id` header)
+- `analyses.py` — `GET /analyses?limit=20&skip=0`, `GET /analyses/{id}` (history, requires `x-user-id` header; limit capped at 50)
 - `credits.py` — `GET /credits` (balance + last 10 transactions, requires `x-user-id` header)
 - `payments.py` — `POST /payments/checkout` (create Stripe session), `POST /payments/webhook` (Stripe events)
 - `admin.py` — `POST /admin/credits` (manually add credits, protected by `x-admin-key` header)
@@ -104,11 +104,17 @@ All requests (except `POST /payments/webhook`) must include:
 ```
 Authorization: Bearer <INTERNAL_API_SECRET>
 ```
-This is enforced by `InternalAuthMiddleware` in `app/main.py`. If the header is missing or wrong the backend returns `403`. The check is skipped when `INTERNAL_API_SECRET` is not set, so local dev works without it.
+This is enforced by `InternalAuthMiddleware` in `app/main.py` using `hmac.compare_digest()` (timing-safe). If the header is missing or wrong the backend returns `403`. The check is skipped when `INTERNAL_API_SECRET` is not set, so local dev works without it.
 
 `/payments/webhook` is exempt because Stripe calls it directly — it is protected instead by Stripe's own signature verification (`STRIPE_WEBHOOK_SECRET`).
 
 The Next.js server must add this header to every fetch call to the backend. `INTERNAL_API_SECRET` must be a non-`NEXT_PUBLIC_` env var so it is never sent to the browser.
+
+The `x-admin-key` comparison in `admin.py` also uses `hmac.compare_digest()` for the same reason.
+
+**CORS** is restricted to `GET`, `POST`, `OPTIONS` methods and only the four headers the API actually uses (`Authorization`, `Content-Type`, `x-user-id`, `x-admin-key`). Allowed origins are driven by `ALLOWED_ORIGINS`.
+
+**`success_url` / `cancel_url`** in `POST /payments/checkout` are validated against the `ALLOWED_ORIGINS` whitelist to prevent open-redirect abuse.
 
 ## Key Data Flow Detail
 
@@ -154,7 +160,13 @@ Auto-deploys on every push to `main`.
 - [ ] Handle `402` from `POST /analyze` → redirect to pricing page
 - [ ] Add "Contact us" button for Business tier
 
-### 3. When ready for real users
+### 3. Performance & reliability (before scaling)
+- [ ] **Frontend timeout** — Vercel free tier times out at 10s. Add `export const maxDuration = 60` to the Next.js `/api/analyze` route (requires Vercel Pro), or restructure to async (submit → poll)
+- [ ] **Add structured logging to backend** — currently only print statements. Add request ID, user ID, video ID, duration, comment count to every log line so failures are easy to trace
+- [ ] **Concurrency under load** — multiple users hitting `/analyze` simultaneously each burn YouTube API quota in parallel. If quota runs out (10,000 units/day free), all fetches fail. Monitor quota usage in Google Cloud Console and consider adding a per-user rate limit
+- [ ] **Railway single instance** — currently 1 replica. Under real load (10+ concurrent users) consider scaling up or adding a queue so heavy analysis jobs don't block each other
+
+### 4. When ready for real users
 - [ ] Switch Stripe from test mode to live mode (new keys)
 - [ ] Update `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in Railway with live keys
 - [ ] Upgrade Railway to Hobby plan ($5/month) to prevent cold starts

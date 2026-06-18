@@ -1,4 +1,5 @@
 import os
+import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -26,8 +27,8 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "x-user-id", "x-admin-key"],
 )
 
 
@@ -38,7 +39,9 @@ class InternalAuthMiddleware(BaseHTTPMiddleware):
 
         if INTERNAL_API_SECRET:
             auth = request.headers.get("Authorization", "")
-            if auth != f"Bearer {INTERNAL_API_SECRET}":
+            expected = f"Bearer {INTERNAL_API_SECRET}"
+            # Timing-safe comparison to prevent secret enumeration via timing attacks
+            if not hmac.compare_digest(auth.encode(), expected.encode()):
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
 
         return await call_next(request)

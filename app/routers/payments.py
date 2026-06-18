@@ -1,7 +1,8 @@
 import os
 import stripe
 from fastapi import APIRouter, HTTPException, Header, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from urllib.parse import urlparse
 
 from app.db.models import User, CreditTransaction
 from app.config import STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICES, STRIPE_CREDITS
@@ -10,11 +11,32 @@ router = APIRouter()
 
 stripe.api_key = STRIPE_SECRET_KEY
 
+_ALLOWED_REDIRECT_HOSTS = {
+    h.strip()
+    for h in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if h.strip()
+}
+
+
+def _validate_redirect_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Redirect URL must use http or https")
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    if origin not in _ALLOWED_REDIRECT_HOSTS:
+        raise ValueError("Redirect URL host not allowed")
+    return url
+
 
 class CheckoutRequest(BaseModel):
     price_key: str
     success_url: str
     cancel_url: str
+
+    @field_validator("success_url", "cancel_url")
+    @classmethod
+    def validate_redirect(cls, v: str) -> str:
+        return _validate_redirect_url(v)
 
 
 @router.post("/payments/checkout")
