@@ -10,19 +10,8 @@ PROVIDERS = {
 DEFAULT_PROVIDER = "gemini"
 COMMENTS_STALE_AFTER_HOURS = 24
 
-# Credit tiers: (max_comments, credits_cost). None = no upper bound.
-CREDIT_TIERS = [
-    (500,   1),
-    (2000,  2),
-    (10000, 3),
-    (None,  5),
-]
-
-
 def credits_for_count(comment_count: int) -> int:
-    for threshold, cost in CREDIT_TIERS:
-        if threshold is None or comment_count <= threshold:
-            return cost
+    return 1
 
 
 # Stripe — set these in .env, then paste real Price IDs from Stripe dashboard

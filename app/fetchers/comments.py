@@ -34,6 +34,9 @@ def save_comment(comment_id, video_id, channel_id, text, author,
     return True
 
 
+MAX_COMMENTS = 300
+
+
 def fetch_comments(video_id, channel_id, youtube):
     total_saved = 0
     total_skipped = 0
@@ -45,11 +48,15 @@ def fetch_comments(video_id, channel_id, youtube):
             part="snippet,replies",
             videoId=video_id,
             maxResults=100,
+            order="relevance",
             pageToken=next_page_token
         ).execute()
         quota_used += 1
 
         for item in response["items"]:
+            if total_saved >= MAX_COMMENTS:
+                break
+
             thread_snippet = item["snippet"]
             top = thread_snippet["topLevelComment"]
             top_snippet = top["snippet"]
@@ -74,10 +81,15 @@ def fetch_comments(video_id, channel_id, youtube):
             else:
                 total_skipped += 1
 
+            if total_saved >= MAX_COMMENTS:
+                break
+
             inline_replies = item.get("replies", {}).get("comments", [])
 
             if reply_count == 0 or reply_count <= len(inline_replies):
                 for reply in inline_replies:
+                    if total_saved >= MAX_COMMENTS:
+                        break
                     reply_snippet = reply["snippet"]
                     saved = save_comment(
                         comment_id=reply["id"],
@@ -100,6 +112,8 @@ def fetch_comments(video_id, channel_id, youtube):
                 reply_token = None
 
                 while True:
+                    if total_saved >= MAX_COMMENTS:
+                        break
                     reply_response = youtube.comments().list(
                         part="snippet",
                         parentId=comment_id,
@@ -109,6 +123,8 @@ def fetch_comments(video_id, channel_id, youtube):
                     quota_used += 1
 
                     for reply in reply_response["items"]:
+                        if total_saved >= MAX_COMMENTS:
+                            break
                         reply_snippet = reply["snippet"]
                         saved = save_comment(
                             comment_id=reply["id"],
@@ -131,6 +147,9 @@ def fetch_comments(video_id, channel_id, youtube):
                     reply_token = reply_response.get("nextPageToken")
                     if not reply_token:
                         break
+
+        if total_saved >= MAX_COMMENTS:
+            break
 
         next_page_token = response.get("nextPageToken")
         if not next_page_token:
