@@ -1,7 +1,51 @@
 from datetime import datetime, timezone
+from typing import List
+from pydantic import BaseModel, ValidationError
 from app.db.models import Comment, Analysis
 from app.prompts import PROMPTS, CURRENT_PROMPT_VERSION
 from app.config import PROVIDERS, DEFAULT_PROVIDER
+
+
+class _LikedComment(BaseModel):
+    text: str
+    likes: int
+
+
+class _Sentiment(BaseModel):
+    positive: int
+    neutral: int
+    negative: int
+
+
+class _Stats(BaseModel):
+    total_comments_analyzed: int
+    top_liked_comments: List[_LikedComment]
+    sentiment_breakdown: _Sentiment
+
+
+class _InsightItem(BaseModel):
+    title: str
+    description: str
+
+
+class _VideoIdea(BaseModel):
+    title: str
+    reason: str
+
+
+class _Insights(BaseModel):
+    complaints: List[_InsightItem]
+    confusion_points: List[_InsightItem]
+    content_requests: List[_InsightItem]
+    audience_struggles: List[_InsightItem]
+    content_gaps: List[_InsightItem]
+    video_ideas: List[_VideoIdea]
+
+
+class AnalysisResult(BaseModel):
+    summary: str
+    stats: _Stats
+    insights: _Insights
 
 
 def run_analysis(video_id, channel_id, provider=DEFAULT_PROVIDER, user_id=None):
@@ -25,6 +69,11 @@ def run_analysis(video_id, channel_id, provider=DEFAULT_PROVIDER, user_id=None):
     print(f"  Analyzing {len(comments)} comments with {provider} (prompt v{CURRENT_PROMPT_VERSION})...")
 
     result, model = PROVIDERS[provider].analyze(comments, prompt)
+
+    try:
+        AnalysisResult.model_validate(result)
+    except ValidationError as e:
+        raise ValueError(f"AI response failed validation: {e}") from e
 
     analysis = Analysis(
         video_id=video_id,
