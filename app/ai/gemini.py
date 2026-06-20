@@ -9,6 +9,73 @@ load_dotenv()
 
 MODEL = "gemini-3.1-flash-lite"
 
+_INSIGHT_ITEM = types.Schema(
+    type=types.Type.OBJECT,
+    properties={
+        "title":       types.Schema(type=types.Type.STRING),
+        "description": types.Schema(type=types.Type.STRING),
+    },
+    required=["title", "description"],
+)
+
+RESPONSE_SCHEMA = types.Schema(
+    type=types.Type.OBJECT,
+    required=["summary", "stats", "insights"],
+    properties={
+        "summary": types.Schema(type=types.Type.STRING),
+        "stats": types.Schema(
+            type=types.Type.OBJECT,
+            required=["total_comments_analyzed", "top_liked_comments", "sentiment_breakdown"],
+            properties={
+                "total_comments_analyzed": types.Schema(type=types.Type.INTEGER),
+                "top_liked_comments": types.Schema(
+                    type=types.Type.ARRAY,
+                    items=types.Schema(
+                        type=types.Type.OBJECT,
+                        required=["text", "likes"],
+                        properties={
+                            "text":  types.Schema(type=types.Type.STRING),
+                            "likes": types.Schema(type=types.Type.INTEGER),
+                        },
+                    ),
+                ),
+                "sentiment_breakdown": types.Schema(
+                    type=types.Type.OBJECT,
+                    required=["positive", "neutral", "negative"],
+                    properties={
+                        "positive": types.Schema(type=types.Type.INTEGER),
+                        "neutral":  types.Schema(type=types.Type.INTEGER),
+                        "negative": types.Schema(type=types.Type.INTEGER),
+                    },
+                ),
+            },
+        ),
+        "insights": types.Schema(
+            type=types.Type.OBJECT,
+            required=["complaints", "confusion_points", "content_requests",
+                      "audience_struggles", "content_gaps", "video_ideas"],
+            properties={
+                "complaints":        types.Schema(type=types.Type.ARRAY, items=_INSIGHT_ITEM),
+                "confusion_points":  types.Schema(type=types.Type.ARRAY, items=_INSIGHT_ITEM),
+                "content_requests":  types.Schema(type=types.Type.ARRAY, items=_INSIGHT_ITEM),
+                "audience_struggles": types.Schema(type=types.Type.ARRAY, items=_INSIGHT_ITEM),
+                "content_gaps":      types.Schema(type=types.Type.ARRAY, items=_INSIGHT_ITEM),
+                "video_ideas": types.Schema(
+                    type=types.Type.ARRAY,
+                    items=types.Schema(
+                        type=types.Type.OBJECT,
+                        required=["title", "reason"],
+                        properties={
+                            "title":  types.Schema(type=types.Type.STRING),
+                            "reason": types.Schema(type=types.Type.STRING),
+                        },
+                    ),
+                ),
+            },
+        ),
+    },
+)
+
 
 def clean_json_response(text):
     text = text.strip()
@@ -30,6 +97,7 @@ def analyze(comments, prompt):
         contents=full_prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
+            response_schema=RESPONSE_SCHEMA,
             temperature=0.4
         )
     )
