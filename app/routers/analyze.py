@@ -1,4 +1,6 @@
 import os
+import threading
+import uuid
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, parse_qs
 
@@ -14,6 +16,12 @@ from app.config import DEFAULT_PROVIDER, COMMENTS_STALE_AFTER_HOURS, credits_for
 from app.prompts import CURRENT_PROMPT_VERSION
 
 router = APIRouter()
+
+_jobs: dict[str, dict] = {}
+# keys are job IDs; values: {status, result, error, user_id}
+# status: "pending" | "running" | "done" | "failed"
+
+_semaphore = threading.Semaphore(3)
 
 
 def extract_video_id(url: str) -> str:
@@ -63,6 +71,9 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    if not _semaphore.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Server is busy, try again in a moment")
+
     youtube = build("youtube", "v3", developerKey=os.getenv("YOUTUBE_API_KEY"))
 
     existing = Video.objects(video_id=video_id).first()
@@ -78,6 +89,7 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
         try:
             video, _, _, _ = fetch_video(video_id, youtube)
         except ValueError as e:
+            _semaphore.release()
             raise HTTPException(status_code=404, detail=str(e))
 
         comment_count = video.stats.comment_count if video.stats else 0
@@ -87,6 +99,7 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
 
     credits_needed = credits_for_count(comment_count)
     if user.credits < credits_needed:
+        _semaphore.release()
         raise HTTPException(
             status_code=402,
             detail={
@@ -96,48 +109,84 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
             },
         )
 
-    if comments_stale:
-        fetch_comments(video_id, video.channel_id, youtube)
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {"status": "pending", "result": None, "error": None, "user_id": x_user_id}
 
-    video = Video.objects(video_id=video_id).first()
-
-    if not req.force:
-        analysis = Analysis.objects(
-            video_id=video_id,
-            user_id=x_user_id,
-            provider=req.provider,
-            prompt_version=CURRENT_PROMPT_VERSION,
-        ).order_by("-created_at").first()
-    else:
-        analysis = None
-
-    if not analysis:
+    def run_job():
         try:
-            analysis = run_analysis(video_id, video.channel_id, provider=req.provider, user_id=x_user_id)
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
+            _jobs[job_id]["status"] = "running"
 
-        User.objects(user_id=x_user_id).update_one(dec__credits=credits_needed)
-        CreditTransaction(
-            user_id=x_user_id,
-            amount=-credits_needed,
-            type="analysis",
-            description=f"Analyzed: {video.title}",
-        ).save()
+            if comments_stale:
+                fetch_comments(video_id, video.channel_id, youtube)
 
-    user.reload()
+            current_video = Video.objects(video_id=video_id).first()
 
-    return {
-        "id": str(analysis.id),
-        "video_id": video_id,
-        "video_title": video.title,
-        "video_thumbnail_url": video.thumbnail_url,
-        "provider": analysis.provider,
-        "model": analysis.model,
-        "prompt_version": analysis.prompt_version,
-        "summary": analysis.summary,
-        "stats": analysis.stats,
-        "insights": analysis.insights,
-        "created_at": analysis.created_at,
-        "credits_remaining": user.credits,
-    }
+            if not req.force:
+                cached = Analysis.objects(
+                    video_id=video_id,
+                    user_id=x_user_id,
+                    provider=req.provider,
+                    prompt_version=CURRENT_PROMPT_VERSION,
+                ).order_by("-created_at").first()
+            else:
+                cached = None
+
+            if cached:
+                analysis = cached
+            else:
+                analysis = run_analysis(video_id, current_video.channel_id, provider=req.provider, user_id=x_user_id)
+                User.objects(user_id=x_user_id).update_one(dec__credits=credits_needed)
+                CreditTransaction(
+                    user_id=x_user_id,
+                    amount=-credits_needed,
+                    type="analysis",
+                    description=f"Analyzed: {current_video.title}",
+                ).save()
+
+            refreshed_user = User.objects(user_id=x_user_id).first()
+
+            _jobs[job_id]["status"] = "done"
+            _jobs[job_id]["result"] = {
+                "id": str(analysis.id),
+                "video_id": video_id,
+                "video_title": current_video.title,
+                "video_thumbnail_url": current_video.thumbnail_url,
+                "provider": analysis.provider,
+                "model": analysis.model,
+                "prompt_version": analysis.prompt_version,
+                "summary": analysis.summary,
+                "stats": analysis.stats,
+                "insights": analysis.insights,
+                "created_at": analysis.created_at,
+                "credits_remaining": refreshed_user.credits,
+            }
+        except Exception as e:
+            _jobs[job_id]["status"] = "failed"
+            _jobs[job_id]["error"] = str(e)
+        finally:
+            _semaphore.release()
+
+    threading.Thread(target=run_job, daemon=True).start()
+
+    return {"job_id": job_id}
+
+
+@router.get("/analyze/status/{job_id}")
+def analyze_status(job_id: str):
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    status = job["status"]
+
+    if status == "done":
+        result = job["result"]
+        del _jobs[job_id]
+        return {"status": "done", "result": result}
+
+    if status == "failed":
+        error = job["error"]
+        del _jobs[job_id]
+        return {"status": "error", "error": error}
+
+    return {"status": status}
