@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse
 from dotenv import load_dotenv
 
 from app.db.connection import connect_db
-from app.routers import users, analyze, analyses, payments, admin, credits
+from app.routers import users, analyze, analyses, payments, credits
 from app.config import INTERNAL_API_SECRET
 
 load_dotenv()
@@ -28,7 +28,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","),
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "x-user-id", "x-admin-key"],
+    allow_headers=["Authorization", "Content-Type", "x-user-id"],
 )
 
 
@@ -53,5 +53,4 @@ app.include_router(users.router)
 app.include_router(analyze.router)
 app.include_router(analyses.router)
 app.include_router(payments.router)
-app.include_router(admin.router)
 app.include_router(credits.router)
