@@ -63,24 +63,14 @@ def create_checkout(req: CheckoutRequest, x_user_id: str | None = Header(default
     else:
         customer_id = user.stripe_customer_id
 
-    is_subscription = req.price_key.startswith("sub_")
-    mode = "subscription" if is_subscription else "payment"
-
-    session_params = {
-        "customer": customer_id,
-        "line_items": [{"price": price_id, "quantity": 1}],
-        "mode": mode,
-        "success_url": req.success_url,
-        "cancel_url": req.cancel_url,
-        "metadata": {"user_id": x_user_id, "price_key": req.price_key},
-    }
-
-    if is_subscription:
-        session_params["subscription_data"] = {
-            "metadata": {"user_id": x_user_id, "price_key": req.price_key}
-        }
-
-    session = stripe.checkout.Session.create(**session_params)
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        line_items=[{"price": price_id, "quantity": 1}],
+        mode="payment",
+        success_url=req.success_url,
+        cancel_url=req.cancel_url,
+        metadata={"user_id": x_user_id, "price_key": req.price_key},
+    )
 
     return {"checkout_url": session.url}
 
@@ -99,10 +89,6 @@ async def stripe_webhook(request: Request):
         session = event["data"]["object"]
         _handle_checkout_completed(session)
 
-    elif event["type"] == "invoice.payment_succeeded":
-        invoice = event["data"]["object"]
-        _handle_invoice_paid(invoice)
-
     return {"status": "ok"}
 
 
@@ -110,8 +96,7 @@ def _handle_checkout_completed(session):
     price_key = session.get("metadata", {}).get("price_key")
     user_id = session.get("metadata", {}).get("user_id")
 
-    # Only handle one-time pack purchases here; subscriptions are handled via invoice
-    if not price_key or not user_id or price_key.startswith("sub_"):
+    if not price_key or not user_id:
         return
 
     credits = STRIPE_CREDITS.get(price_key, 0)
@@ -125,31 +110,4 @@ def _handle_checkout_completed(session):
         type="purchase",
         description=f"Credit pack – {credits} credits",
         stripe_session_id=session.get("id"),
-    ).save()
-
-
-def _handle_invoice_paid(invoice):
-    subscription_id = invoice.get("subscription")
-    if not subscription_id:
-        return
-
-    subscription = stripe.Subscription.retrieve(subscription_id)
-    metadata = subscription.get("metadata", {})
-    price_key = metadata.get("price_key")
-    user_id = metadata.get("user_id")
-
-    if not price_key or not user_id:
-        return
-
-    credits = STRIPE_CREDITS.get(price_key, 0)
-    if credits <= 0:
-        return
-
-    User.objects(user_id=user_id).update_one(inc__credits=credits)
-    CreditTransaction(
-        user_id=user_id,
-        amount=credits,
-        type="subscription",
-        description=f"Subscription renewal – {credits} credits",
-        stripe_session_id=invoice.get("id"),
     ).save()
