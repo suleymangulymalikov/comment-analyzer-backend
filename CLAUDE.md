@@ -80,16 +80,13 @@ Cached analyses (same video/user/provider/prompt_version) do NOT cost credits �
 | Option | Price | Credits |
 |---|---|---|
 | Standard Pack (one-time) | $7.99 | 10 |
-| Starter (monthly) | $9.99/mo | 15/mo |
-| Pro (monthly) | $19.99/mo | 40/mo |
 | Business | Custom / contact us | Manual via admin endpoint |
 
 ## Stripe Webhook Flow
 
-- `checkout.session.completed` → adds credits for one-time pack purchases
-- `invoice.payment_succeeded` → adds monthly credits for subscription renewals
+- `checkout.session.completed` → adds credits (`pack_standard` only; all purchases are one-time)
 
-Subscription metadata (`user_id`, `price_key`) must be on the Stripe Subscription object (set via `subscription_data.metadata` in the checkout session creation) so the invoice webhook can identify the user.
+Only `checkout.session.completed` is handled. Subscription products (`sub_starter`, `sub_pro`) and `invoice.payment_succeeded` have been removed.
 
 ## Backend Security
 
