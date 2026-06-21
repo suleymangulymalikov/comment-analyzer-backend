@@ -51,17 +51,17 @@ Use the `.venv` virtual environment — all dependencies are installed there:
 
 All application code lives under `app/`. The pipeline has two phases: **fetch → analyze**.
 
-**`app/fetchers/`**: Hits YouTube Data API v3 to pull video metadata, channel info, and all comments including replies. For threads where `totalReplyCount > len(inline_replies)`, it makes additional paginated `comments().list` calls to fetch all replies. Stores everything flat in MongoDB via MongoEngine. Comments re-fetch if `comments_fetched_at` is older than 24 hours (`COMMENTS_STALE_AFTER_HOURS` in `app/config.py`).
+**`app/fetchers/`**: Hits YouTube Data API v3 to pull video metadata, channel info, and up to **300 comments** (by relevance order) including replies. Capped at `MAX_COMMENTS = 300` in `fetchers/comments.py`. For threads where `totalReplyCount > len(inline_replies)`, it makes additional paginated `comments().list` calls to fetch replies (still subject to the 300 cap). Stores everything flat in MongoDB via MongoEngine. Comments re-fetch if `comments_fetched_at` is older than 24 hours (`COMMENTS_STALE_AFTER_HOURS` in `app/config.py`). After fetching, `Video.comments_stored_count` is updated with the exact count stored.
 
-**`app/services/analyzer.py`**: Loads ALL comments (top-level and replies) from MongoDB ordered by `like_count` descending, builds a prompt, calls the configured AI provider, parses the JSON response, and saves an `Analysis` document per user. The active prompt is `CURRENT_PROMPT_VERSION` in `app/prompts/__init__.py` — increment this when changing the prompt so old analyses remain comparable.
+**`app/services/analyzer.py`**: Loads all stored comments for the video from MongoDB ordered by `like_count` descending, builds a prompt, calls the configured AI provider, **validates the response with Pydantic** (`AnalysisResult` model), and saves an `Analysis` document per user. The active prompt is `CURRENT_PROMPT_VERSION` in `app/prompts/__init__.py` — increment this when changing the prompt so old analyses remain comparable.
 
-**`app/ai/`** (`gemini.py`, `claude.py`, `openai.py`): Each exposes a single `analyze(comments, prompt) -> (result_dict, model_name)` function. `app/config.py` maps provider names to modules. Gemini (`gemini-3.1-flash-lite`) is the only fully implemented provider; claude and openai raise `NotImplementedError`.
+**`app/ai/`** (`gemini.py`, `claude.py`, `openai.py`): Each exposes a single `analyze(comments, prompt) -> (result_dict, model_name)` function. `app/config.py` maps provider names to modules. Gemini (`gemini-3.1-flash-lite`) is the only fully implemented provider; claude and openai raise `NotImplementedError`. Gemini uses a typed `RESPONSE_SCHEMA` with `response_mime_type="application/json"` to enforce structured output from the model.
 
 **`app/db/`**: MongoEngine ODM. `connect_db()` / `disconnect_db()` must wrap any script that touches the DB. In the FastAPI app this is handled in the lifespan handler. Collections: `users`, `channels`, `videos`, `comments`, `analyses`, `credit_transactions`.
 
 **`app/routers/`**: FastAPI routers split by concern:
 - `users.py` — `POST /users` (create-or-find user by `user_id` + `email`)
-- `analyze.py` — `POST /analyze` (fetch + analyze, requires `x-user-id` header)
+- `analyze.py` — `POST /analyze` (pre-checks sync, heavy work async; returns `{"job_id": "..."}` immediately); `GET /analyze/status/{job_id}` (poll for result)
 - `analyses.py` — `GET /analyses?limit=20&skip=0`, `GET /analyses/{id}` (history, requires `x-user-id` header; limit capped at 50)
 - `credits.py` — `GET /credits` (balance + last 10 transactions, requires `x-user-id` header)
 - `payments.py` — `POST /payments/checkout` (create Stripe session), `POST /payments/webhook` (Stripe events)
@@ -69,16 +69,9 @@ All application code lives under `app/`. The pipeline has two phases: **fetch �
 
 ## Credit System
 
-Every user starts with 0 credits. Credits are spent when an analysis runs. Cost is based on the video's comment count (from `video.stats.comment_count`, available after `fetch_video` before the expensive `fetch_comments`):
+Every user starts with 0 credits. Credits are spent when an analysis runs. Cost is **flat 1 credit per analysis** regardless of comment count — `credits_for_count()` in `app/config.py` always returns `1`.
 
-| Comments | Credits |
-|---|---|
-| 0 – 500 | 1 |
-| 501 – 2,000 | 2 |
-| 2,001 – 10,000 | 3 |
-| 10,001+ | 5 |
-
-The credit check happens between `fetch_video` and `fetch_comments` so no YouTube API quota is burned if the user has insufficient credits. `credits_for_count()` lives in `app/config.py`.
+The credit check happens between `fetch_video` and `fetch_comments` (using `video.stats.comment_count` on fresh fetches, or `video.comments_stored_count` on cache hits) so no YouTube API quota is burned if the user has insufficient credits.
 
 Cached analyses (same video/user/provider/prompt_version) do NOT cost credits — only new analyses deduct.
 
@@ -118,7 +111,10 @@ The `x-admin-key` comparison in `admin.py` also uses `hmac.compare_digest()` for
 
 ## Key Data Flow Detail
 
-`fetch_comments` sets `Video.comments_fetched = True` only after all comments are stored. `run_analysis` queries ALL `Comment` documents for the video (top-level and replies), ordered by `like_count` descending. Results are cached per `(video_id, user_id, provider, prompt_version)` — pass `force=true` in the request body to bypass the cache.
+`fetch_comments` sets `Video.comments_fetched = True` and `Video.comments_stored_count` only after all comments are stored (capped at 300). `run_analysis` queries all stored `Comment` documents for the video, ordered by `like_count` descending, then validates the AI response with Pydantic before saving. Results are cached per `(video_id, user_id, provider, prompt_version)` — pass `force=true` in the request body to bypass the cache.
+
+**Async job flow (`analyze.py`):**
+`POST /analyze` runs pre-checks synchronously (auth, video ID parsing, `fetch_video` for metadata, credit check), then spawns a `threading.Thread` for the slow work (comment fetch + AI analysis) and returns `{"job_id": "<uuid>"}` immediately. Job state is kept in the module-level `_jobs` dict (`{status, result, error, user_id}`; status values: `pending | running | done | failed`). A `threading.Semaphore(3)` caps concurrent jobs — returns 503 if all slots are taken. The semaphore is always released in the thread's `finally` block. `GET /analyze/status/{job_id}` returns the current state and **deletes the job from `_jobs`** on `done`/`failed` to prevent unbounded memory growth.
 
 ## Prompt Versioning
 
