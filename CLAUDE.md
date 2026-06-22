@@ -14,13 +14,8 @@ GEMINI_API_KEY=...
 STRIPE_SECRET_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 
-# Stripe Price IDs — copy from Stripe dashboard after creating products
+# Stripe Price ID — copy from Stripe dashboard after creating the product
 STRIPE_PRICE_PACK_STANDARD=price_...   # $7.99 one-time, 10 credits
-STRIPE_PRICE_SUB_STARTER=price_...     # $9.99/month, 15 credits
-STRIPE_PRICE_SUB_PRO=price_...         # $19.99/month, 40 credits
-
-# Admin endpoint protection
-ADMIN_SECRET=some_secret_key
 
 # Shared secret with Next.js backend — every request except /payments/webhook
 # must include: Authorization: Bearer <INTERNAL_API_SECRET>
@@ -62,7 +57,7 @@ All application code lives under `app/`. The pipeline has two phases: **fetch �
 **`app/routers/`**: FastAPI routers split by concern:
 - `users.py` — `POST /users` (create-or-find user by `user_id` + `email`)
 - `analyze.py` — `POST /analyze` (pre-checks sync, heavy work async; returns `{"job_id": "..."}` immediately); `GET /analyze/status/{job_id}` (poll for result)
-- `analyses.py` — `GET /analyses?limit=20&skip=0`, `GET /analyses/{id}` (history, requires `x-user-id` header; limit capped at 50)
+- `analyses.py` — `GET /analyses?limit=20&skip=0` (list; includes `stats.total_comments_analyzed` + `stats.sentiment_breakdown`, no full insights), `GET /analyses/{id}` (single; full stats + insights); requires `x-user-id` header; limit capped at 50
 - `credits.py` — `GET /credits` (balance + last 10 transactions, requires `x-user-id` header)
 - `payments.py` — `POST /payments/checkout` (create Stripe session), `POST /payments/webhook` (Stripe events)
 
@@ -79,7 +74,6 @@ Cached analyses (same video/user/provider/prompt_version) do NOT cost credits �
 | Option | Price | Credits |
 |---|---|---|
 | Standard Pack (one-time) | $7.99 | 10 |
-| Business | Custom / contact us | Manual via admin endpoint |
 
 ## Stripe Webhook Flow
 
@@ -121,7 +115,7 @@ Auto-deploys on every push to `main`.
 
 **Railway env vars set:**
 - `YOUTUBE_API_KEY`, `MONGODB_URI`, `GEMINI_API_KEY`
-- `INTERNAL_API_SECRET`, `ADMIN_SECRET`
+- `INTERNAL_API_SECRET`
 - `ALLOWED_ORIGINS=https://comment-analyzer-frontend-murex.vercel.app`
 
 **MongoDB Atlas:** Network Access set to `0.0.0.0/0` (allow all IPs) — required because Railway has dynamic IPs.
@@ -131,13 +125,11 @@ Auto-deploys on every push to `main`.
 ## TODO — Must complete before launch
 
 ### 1. Stripe setup (NOT done yet)
-- [ ] Create 3 products in [Stripe Dashboard](https://dashboard.stripe.com/products):
-  - **Standard Pack** — one-time, $7.99
-  - **Starter** — recurring monthly, $9.99/mo
-  - **Pro** — recurring monthly, $19.99/mo
-- [ ] Copy the 3 Price IDs into Railway env vars: `STRIPE_PRICE_PACK_STANDARD`, `STRIPE_PRICE_SUB_STARTER`, `STRIPE_PRICE_SUB_PRO`
+- [ ] Create 1 product in [Stripe Dashboard](https://dashboard.stripe.com/products):
+  - **Standard Pack** — one-time, $7.99, 10 credits
+- [ ] Copy the Price ID into Railway env var: `STRIPE_PRICE_PACK_STANDARD`
 - [ ] Add webhook in Stripe dashboard → `https://web-production-47395.up.railway.app/payments/webhook`
-- [ ] Subscribe to: `checkout.session.completed`, `invoice.payment_succeeded`
+- [ ] Subscribe to: `checkout.session.completed`
 - [ ] Copy webhook signing secret into Railway env var: `STRIPE_WEBHOOK_SECRET`
 - [ ] Copy Stripe secret key into Railway env var: `STRIPE_SECRET_KEY`
 - [ ] Test with `stripe listen --forward-to localhost:8000/payments/webhook` before going live
@@ -151,7 +143,7 @@ Auto-deploys on every push to `main`.
 - [ ] Add "Contact us" button for Business tier
 
 ### 3. Performance & reliability (before scaling)
-- [ ] **Frontend timeout** — Vercel free tier times out at 10s. Add `export const maxDuration = 60` to the Next.js `/api/analyze` route (requires Vercel Pro), or restructure to async (submit → poll)
+- [x] **Frontend timeout** — resolved by async job system: `POST /analyze` returns `{"job_id"}` immediately; frontend polls `GET /analyze/status/{job_id}`
 - [ ] **Add structured logging to backend** — currently only print statements. Add request ID, user ID, video ID, duration, comment count to every log line so failures are easy to trace
 - [ ] **Concurrency under load** — multiple users hitting `/analyze` simultaneously each burn YouTube API quota in parallel. If quota runs out (10,000 units/day free), all fetches fail. Monitor quota usage in Google Cloud Console and consider adding a per-user rate limit
 - [ ] **Railway single instance** — currently 1 replica. Under real load (10+ concurrent users) consider scaling up or adding a queue so heavy analysis jobs don't block each other

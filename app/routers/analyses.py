@@ -33,6 +33,10 @@ def list_analyses(
             "model": a.model,
             "prompt_version": a.prompt_version,
             "summary": a.summary,
+            "stats": {
+                "total_comments_analyzed": (a.stats or {}).get("total_comments_analyzed"),
+                "sentiment_breakdown": (a.stats or {}).get("sentiment_breakdown"),
+            },
             "created_at": a.created_at,
         }
         for a in analyses
