@@ -1,9 +1,13 @@
+import logging
+import time
 from datetime import datetime, timezone
 from typing import List
 from pydantic import BaseModel, ValidationError
 from app.db.models import Comment, Analysis
 from app.prompts import PROMPTS, CURRENT_PROMPT_VERSION
 from app.config import PROVIDERS, DEFAULT_PROVIDER
+
+logger = logging.getLogger(__name__)
 
 
 class _LikedComment(BaseModel):
@@ -66,9 +70,12 @@ def run_analysis(video_id, channel_id, provider=DEFAULT_PROVIDER, user_id=None):
 
     prompt = PROMPTS[CURRENT_PROMPT_VERSION]
 
-    print(f"  Analyzing {len(comments)} comments with {provider} (prompt v{CURRENT_PROMPT_VERSION})...")
+    logger.info("analysis_start video_id=%s user_id=%s provider=%s prompt_v=%d comments=%d",
+                video_id, user_id, provider, CURRENT_PROMPT_VERSION, len(comments))
 
+    t0 = time.monotonic()
     result, model = PROVIDERS[provider].analyze(comments, prompt)
+    duration = time.monotonic() - t0
 
     try:
         AnalysisResult.model_validate(result)
@@ -89,5 +96,6 @@ def run_analysis(video_id, channel_id, provider=DEFAULT_PROVIDER, user_id=None):
     )
     analysis.save()
 
-    print(f"  Analysis saved (provider={provider}, model={model}, prompt_version={CURRENT_PROMPT_VERSION})")
+    logger.info("analysis_done video_id=%s user_id=%s provider=%s model=%s duration_s=%.1f",
+                video_id, user_id, provider, model, duration)
     return analysis

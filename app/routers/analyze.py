@@ -1,5 +1,7 @@
 import os
+import logging
 import threading
+import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, parse_qs
@@ -16,6 +18,7 @@ from app.config import DEFAULT_PROVIDER, COMMENTS_STALE_AFTER_HOURS, credits_for
 from app.prompts import CURRENT_PROMPT_VERSION
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _jobs: dict[str, dict] = {}
 # keys are job IDs; values: {status, result, error, user_id}
@@ -119,8 +122,11 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
         _jobs[job_id] = {"status": "pending", "result": None, "error": None, "user_id": x_user_id}
 
         def run_job():
+            t0 = time.monotonic()
             try:
                 _jobs[job_id]["status"] = "running"
+                logger.info("job_start job_id=%s user_id=%s video_id=%s provider=%s",
+                            job_id, x_user_id, video_id, req.provider)
 
                 if comments_stale:
                     fetch_comments(video_id, video.channel_id, youtube)
@@ -139,6 +145,8 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
 
                 if cached:
                     analysis = cached
+                    logger.info("job_cached job_id=%s video_id=%s analysis_id=%s",
+                                job_id, video_id, str(cached.id))
                 else:
                     analysis = run_analysis(video_id, current_video.channel_id, provider=req.provider, user_id=x_user_id)
                     User.objects(user_id=x_user_id).update_one(dec__credits=credits_needed)
@@ -151,6 +159,9 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
 
                 refreshed_user = User.objects(user_id=x_user_id).first()
 
+                logger.info("job_done job_id=%s user_id=%s video_id=%s duration_s=%.1f credits_spent=%d",
+                            job_id, x_user_id, video_id, time.monotonic() - t0,
+                            0 if cached else credits_needed)
                 _jobs[job_id]["status"] = "done"
                 _jobs[job_id]["result"] = {
                     "id": str(analysis.id),
@@ -167,6 +178,8 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
                     "credits_remaining": refreshed_user.credits,
                 }
             except Exception as e:
+                logger.error("job_failed job_id=%s user_id=%s video_id=%s error=%s",
+                             job_id, x_user_id, video_id, e)
                 _jobs[job_id]["status"] = "failed"
                 _jobs[job_id]["error"] = str(e)
             finally:

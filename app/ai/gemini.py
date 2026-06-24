@@ -1,9 +1,12 @@
 import os
 import json
+import logging
 import re
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -107,8 +110,7 @@ def analyze(comments, prompt):
     try:
         result = json.loads(cleaned)
     except json.JSONDecodeError as e:
-        print(f"  JSON parse error: {e}")
-        print(f"  Raw response (first 500 chars): {response.text[:500]}")
+        logger.error("gemini_json_parse_error error=%s raw_response=%.500s", e, response.text)
         raise
 
     return result, MODEL
