@@ -74,99 +74,104 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
     if not _semaphore.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="Server is busy, try again in a moment")
 
-    youtube = build("youtube", "v3", developerKey=os.getenv("YOUTUBE_API_KEY"))
+    thread_started = False
+    try:
+        youtube = build("youtube", "v3", developerKey=os.getenv("YOUTUBE_API_KEY"))
 
-    existing = Video.objects(video_id=video_id).first()
-    stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=COMMENTS_STALE_AFTER_HOURS)
-    comments_stale = (
-        not existing
-        or not existing.comments_fetched
-        or existing.comments_fetched_at is None
-        or existing.comments_fetched_at.replace(tzinfo=timezone.utc) < stale_cutoff
-    )
-
-    if comments_stale:
-        try:
-            video, _, _, _ = fetch_video(video_id, youtube)
-        except ValueError as e:
-            _semaphore.release()
-            raise HTTPException(status_code=404, detail=str(e))
-
-        comment_count = video.stats.comment_count if video.stats else 0
-    else:
-        video = existing
-        comment_count = video.comments_stored_count or (video.stats.comment_count if video.stats else 0)
-
-    credits_needed = credits_for_count(comment_count)
-    if user.credits < credits_needed:
-        _semaphore.release()
-        raise HTTPException(
-            status_code=402,
-            detail={
-                "error": "insufficient_credits",
-                "required": credits_needed,
-                "balance": user.credits,
-            },
+        existing = Video.objects(video_id=video_id).first()
+        stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=COMMENTS_STALE_AFTER_HOURS)
+        comments_stale = (
+            not existing
+            or not existing.comments_fetched
+            or existing.comments_fetched_at is None
+            or existing.comments_fetched_at.replace(tzinfo=timezone.utc) < stale_cutoff
         )
 
-    job_id = str(uuid.uuid4())
-    _jobs[job_id] = {"status": "pending", "result": None, "error": None, "user_id": x_user_id}
+        if comments_stale:
+            try:
+                video, _, _, _ = fetch_video(video_id, youtube)
+            except ValueError as e:
+                raise HTTPException(status_code=404, detail=str(e))
 
-    def run_job():
-        try:
-            _jobs[job_id]["status"] = "running"
+            comment_count = video.stats.comment_count if video.stats else 0
+        else:
+            video = existing
+            comment_count = video.comments_stored_count or (video.stats.comment_count if video.stats else 0)
 
-            if comments_stale:
-                fetch_comments(video_id, video.channel_id, youtube)
+        credits_needed = credits_for_count(comment_count)
+        if user.credits < credits_needed:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "insufficient_credits",
+                    "required": credits_needed,
+                    "balance": user.credits,
+                },
+            )
 
-            current_video = Video.objects(video_id=video_id).first()
+        job_id = str(uuid.uuid4())
+        _jobs[job_id] = {"status": "pending", "result": None, "error": None, "user_id": x_user_id}
 
-            if not req.force:
-                cached = Analysis.objects(
-                    video_id=video_id,
-                    user_id=x_user_id,
-                    provider=req.provider,
-                    prompt_version=CURRENT_PROMPT_VERSION,
-                ).order_by("-created_at").first()
-            else:
-                cached = None
+        def run_job():
+            try:
+                _jobs[job_id]["status"] = "running"
 
-            if cached:
-                analysis = cached
-            else:
-                analysis = run_analysis(video_id, current_video.channel_id, provider=req.provider, user_id=x_user_id)
-                User.objects(user_id=x_user_id).update_one(dec__credits=credits_needed)
-                CreditTransaction(
-                    user_id=x_user_id,
-                    amount=-credits_needed,
-                    type="analysis",
-                    description=f"Analyzed: {current_video.title}",
-                ).save()
+                if comments_stale:
+                    fetch_comments(video_id, video.channel_id, youtube)
 
-            refreshed_user = User.objects(user_id=x_user_id).first()
+                current_video = Video.objects(video_id=video_id).first()
 
-            _jobs[job_id]["status"] = "done"
-            _jobs[job_id]["result"] = {
-                "id": str(analysis.id),
-                "video_id": video_id,
-                "video_title": current_video.title,
-                "video_thumbnail_url": current_video.thumbnail_url,
-                "provider": analysis.provider,
-                "model": analysis.model,
-                "prompt_version": analysis.prompt_version,
-                "summary": analysis.summary,
-                "stats": analysis.stats,
-                "insights": analysis.insights,
-                "created_at": analysis.created_at,
-                "credits_remaining": refreshed_user.credits,
-            }
-        except Exception as e:
-            _jobs[job_id]["status"] = "failed"
-            _jobs[job_id]["error"] = str(e)
-        finally:
+                if not req.force:
+                    cached = Analysis.objects(
+                        video_id=video_id,
+                        user_id=x_user_id,
+                        provider=req.provider,
+                        prompt_version=CURRENT_PROMPT_VERSION,
+                    ).order_by("-created_at").first()
+                else:
+                    cached = None
+
+                if cached:
+                    analysis = cached
+                else:
+                    analysis = run_analysis(video_id, current_video.channel_id, provider=req.provider, user_id=x_user_id)
+                    User.objects(user_id=x_user_id).update_one(dec__credits=credits_needed)
+                    CreditTransaction(
+                        user_id=x_user_id,
+                        amount=-credits_needed,
+                        type="analysis",
+                        description=f"Analyzed: {current_video.title}",
+                    ).save()
+
+                refreshed_user = User.objects(user_id=x_user_id).first()
+
+                _jobs[job_id]["status"] = "done"
+                _jobs[job_id]["result"] = {
+                    "id": str(analysis.id),
+                    "video_id": video_id,
+                    "video_title": current_video.title,
+                    "video_thumbnail_url": current_video.thumbnail_url,
+                    "provider": analysis.provider,
+                    "model": analysis.model,
+                    "prompt_version": analysis.prompt_version,
+                    "summary": analysis.summary,
+                    "stats": analysis.stats,
+                    "insights": analysis.insights,
+                    "created_at": analysis.created_at,
+                    "credits_remaining": refreshed_user.credits,
+                }
+            except Exception as e:
+                _jobs[job_id]["status"] = "failed"
+                _jobs[job_id]["error"] = str(e)
+            finally:
+                _semaphore.release()
+
+        threading.Thread(target=run_job, daemon=True).start()
+        thread_started = True
+
+    finally:
+        if not thread_started:
             _semaphore.release()
-
-    threading.Thread(target=run_job, daemon=True).start()
 
     return {"job_id": job_id}
 
