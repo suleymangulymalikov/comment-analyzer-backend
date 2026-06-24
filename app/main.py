@@ -1,6 +1,13 @@
 import os
 import hmac
+import logging
 from contextlib import asynccontextmanager
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%SZ",
+)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

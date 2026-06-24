@@ -1,4 +1,5 @@
 import os
+import logging
 import stripe
 from fastapi import APIRouter, HTTPException, Header, Request
 from pydantic import BaseModel, field_validator
@@ -8,6 +9,7 @@ from app.db.models import User, CreditTransaction
 from app.config import STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICES, STRIPE_CREDITS
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 stripe.api_key = STRIPE_SECRET_KEY
 
@@ -97,10 +99,16 @@ def _handle_checkout_completed(session):
     user_id = session.get("metadata", {}).get("user_id")
 
     if not price_key or not user_id:
+        logger.warning("webhook_missing_metadata session_id=%s", session.get("id"))
         return
 
     credits = STRIPE_CREDITS.get(price_key, 0)
     if credits <= 0:
+        return
+
+    session_id = session.get("id")
+    if session_id and CreditTransaction.objects(stripe_session_id=session_id).first():
+        logger.info("webhook_duplicate session_id=%s user_id=%s", session_id, user_id)
         return
 
     User.objects(user_id=user_id).update_one(inc__credits=credits)
@@ -109,5 +117,7 @@ def _handle_checkout_completed(session):
         amount=credits,
         type="purchase",
         description=f"Credit pack – {credits} credits",
-        stripe_session_id=session.get("id"),
+        stripe_session_id=session_id,
     ).save()
+    logger.info("webhook_credits_awarded session_id=%s user_id=%s credits=%d price_key=%s",
+                session_id, user_id, credits, price_key)
