@@ -133,7 +133,11 @@ class CreditTransaction(Document):
 
     meta = {
         "collection": "credit_transactions",
-        "indexes": ["user_id", "created_at"]
+        "indexes": [
+            "user_id",
+            "created_at",
+            {"fields": ["stripe_session_id"], "unique": True, "sparse": True},
+        ]
     }
 
 

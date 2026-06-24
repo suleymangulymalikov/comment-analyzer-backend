@@ -103,11 +103,15 @@ def _handle_checkout_completed(session):
     if credits <= 0:
         return
 
+    session_id = session.get("id")
+    if session_id and CreditTransaction.objects(stripe_session_id=session_id).first():
+        return
+
     User.objects(user_id=user_id).update_one(inc__credits=credits)
     CreditTransaction(
         user_id=user_id,
         amount=credits,
         type="purchase",
         description=f"Credit pack – {credits} credits",
-        stripe_session_id=session.get("id"),
+        stripe_session_id=session_id,
     ).save()
