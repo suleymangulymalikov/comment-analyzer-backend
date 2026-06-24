@@ -63,7 +63,7 @@ All application code lives under `app/`. The pipeline has two phases: **fetch â†
 
 ## Credit System
 
-Every user starts with 0 credits. Credits are spent when an analysis runs. Cost is **flat 1 credit per analysis** regardless of comment count â€” `credits_for_count()` in `app/config.py` always returns `1`.
+Every user starts with 0 credits. Credits are spent when an analysis runs. Cost is **flat 10 credits per analysis** regardless of comment count â€” `credits_for_count()` in `app/config.py` always returns `10`.
 
 The credit check happens between `fetch_video` and `fetch_comments` (using `video.stats.comment_count` on fresh fetches, or `video.comments_stored_count` on cache hits) so no YouTube API quota is burned if the user has insufficient credits.
 
@@ -71,9 +71,11 @@ Cached analyses (same video/user/provider/prompt_version) do NOT cost credits â€
 
 ## Pricing
 
-| Option | Price | Credits |
-|---|---|---|
-| Standard Pack (one-time) | $7.99 | 10 |
+| `price_key` | Type | Price | Credits |
+|---|---|---|---|
+| `pack_starter` | One-time | $9.99 | 50 |
+| `pack_standard` | One-time | $19.99 | 120 |
+| `pack_pro` | One-time | $39.99 | 300 |
 
 ## Stripe Webhook Flow
 
