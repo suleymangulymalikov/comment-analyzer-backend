@@ -80,11 +80,17 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
 
         existing = Video.objects(video_id=video_id).first()
         stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=COMMENTS_STALE_AFTER_HOURS)
+        if existing and existing.comments_fetched_at is not None:
+            fetched_at = existing.comments_fetched_at
+            if fetched_at.tzinfo is None:
+                fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+        else:
+            fetched_at = None
         comments_stale = (
             not existing
             or not existing.comments_fetched
-            or existing.comments_fetched_at is None
-            or existing.comments_fetched_at.replace(tzinfo=timezone.utc) < stale_cutoff
+            or fetched_at is None
+            or fetched_at < stale_cutoff
         )
 
         if comments_stale:
