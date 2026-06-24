@@ -177,10 +177,12 @@ def analyze(req: AnalyzeRequest, x_user_id: str | None = Header(default=None)):
 
 
 @router.get("/analyze/status/{job_id}")
-def analyze_status(job_id: str):
+def analyze_status(job_id: str, x_user_id: str | None = Header(default=None)):
     job = _jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job["user_id"] != x_user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     status = job["status"]
 
